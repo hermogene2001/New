@@ -61,7 +61,6 @@ def select_product(session_id):
     print("3. Cheese")
     choice = input("Enter choice: ")
     product_id = int(choice)
-
     if product_id == 1:  # Yoghurt
         print("Select Size:")
         print("1. Small")
