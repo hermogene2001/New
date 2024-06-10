@@ -1,5 +1,6 @@
 import mysql.connector
 import re
+import time
 
 # Connect to MySQL database
 conn = mysql.connector.connect(
@@ -37,7 +38,23 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 ''')
 
-def select_product():
+# Session management
+sessions = {}
+SESSION_TIMEOUT = 10 * 60  # 10 minutes
+
+def is_session_active(session_id):
+    if session_id not in sessions:
+        return False
+    last_active = sessions[session_id]['last_active']
+    return time.time() - last_active < SESSION_TIMEOUT
+
+def update_session_activity(session_id):
+    if session_id in sessions:
+        sessions[session_id]['last_active'] = time.time()
+
+def select_product(session_id):
+    update_session_activity(session_id)
+    session = sessions[session_id]
     print("Select Product:")
     print("1. Yoghurt")
     print("2. Milk")
@@ -52,10 +69,11 @@ def select_product():
         print("3. Large")
         size_choice = input("Enter choice: ")
         if size_choice in ["1", "2", "3"]:
-            return product_id, int(size_choice)
+            session['product_id'] = product_id
+            session['size'] = int(size_choice)
         else:
             print("Invalid size choice. Please try again.")
-            return select_product()
+            select_product(session_id)
     elif product_id == 2:  # Milk
         print("Select Size:")
         print("1. 250ml")
@@ -64,10 +82,11 @@ def select_product():
         print("4. 5L")
         size_choice = input("Enter choice: ")
         if size_choice in ["1", "2", "3", "4"]:
-            return product_id, int(size_choice) + 3  # Adjust the size index for Milk
+            session['product_id'] = product_id
+            session['size'] = int(size_choice) + 3  # Adjust the size index for Milk
         else:
             print("Invalid size choice. Please try again.")
-            return select_product()
+            select_product(session_id)
     elif product_id == 3:  # Cheese
         print("Select Size:")
         print("1. Small")
@@ -75,25 +94,32 @@ def select_product():
         print("3. Large")
         size_choice = input("Enter choice: ")
         if size_choice in ["1", "2", "3"]:
-            return product_id, int(size_choice)
+            session['product_id'] = product_id
+            session['size'] = int(size_choice)
         else:
             print("Invalid size choice. Please try again.")
-            return select_product()
+            select_product(session_id)
     else:
         print("Invalid product choice. Please try again.")
-        return select_product()
+        select_product(session_id)
 
-
-def enter_quantity():
+def enter_quantity(session_id):
+    update_session_activity(session_id)
     while True:
         quantity = input("Enter Quantity: ")
         if quantity.isdigit():
-            return int(quantity)
+            sessions[session_id]['quantity'] = int(quantity)
+            break
         else:
             print("Invalid quantity. Please enter a valid integer.")
 
-
-def confirm_order(product, size, quantity, customer_id):
+def confirm_order(session_id, customer_id):
+    update_session_activity(session_id)
+    session = sessions[session_id]
+    product = session['product_id']
+    size = session['size']
+    quantity = session['quantity']
+    
     product_key = {
         1: "Yoghurt",
         2: "Milk",
@@ -150,7 +176,8 @@ def confirm_order(product, size, quantity, customer_id):
             print("Order cancelled")
             break
         elif confirm == "3":
-            quantity = enter_quantity()
+            enter_quantity(session_id)
+            quantity = sessions[session_id]['quantity']
             total_price = prices[product_key[product]][size_key[size]] * quantity
             
             # Update and display the order summary card again
@@ -178,11 +205,11 @@ def create_account():
             print("Invalid phone number. Please enter a number starting with 078 or 079.")
     pin = input("Enter PIN: ")
     
-    cursor.execute("INSERT INTO customers (fname, lname, email, phone, pin,road_nbr) VALUES (%s, %s, %s, %s, %s, %s)", (fname, lname, email, phone, pin, roadnbr))
+    cursor.execute("INSERT INTO customers (fname, lname, email, phone, pin, road_nbr) VALUES (%s, %s, %s, %s, %s, %s)", (fname, lname, email, phone, pin, roadnbr))
     conn.commit()
     print("Account created successfully!")
 
-def login():
+def login(session_id):
     print("Login:")
     phone = input("Enter phone number: ")
     pin = input("Enter PIN: ")
@@ -190,6 +217,8 @@ def login():
     cursor.execute("SELECT id FROM customers WHERE phone = %s AND pin = %s", (phone, pin))
     result = cursor.fetchone()
     if result:
+        sessions[session_id]['customer_id'] = result[0]  # Store customer ID in session
+        update_session_activity(session_id)
         return result[0]  # Return customer ID
     else:
         print("Invalid phone number or PIN.")
@@ -200,35 +229,44 @@ def main():
     ussd_code = input("Enter USSD code: ")
     if ussd_code == "*456#":
         while True:
-            print("1. Create Account")
-            print("2. Login")
-            print("3. Exit")
-            choice = input("Enter choice: ")
+            phone_number = input("Enter your phone number: ")
+            session_id = ussd_code + phone_number  # Create a session ID
 
-            if choice == "1":
-                create_account()
-            elif choice == "2":
-                customer_id = login()
-                if customer_id:
-                    while True:
-                        print("1. Place an Order")
-                        print("2. Logout")
-                        choice = input("Enter choice: ")
+            if not is_session_active(session_id):
+                sessions[session_id] = {}  # Initialize session
 
-                        if choice == "1":
-                            product, size = select_product()
-                            quantity = enter_quantity()
-                            confirm_order(product, size, quantity, customer_id)
-                        elif choice == "2":
-                            print("Logged out.")
-                            break
-                        else:
-                            print("Invalid choice. Please try again.")
-            elif choice == "3":
-                print("Thank you for using our service")
-                break
+                print("1. Create Account")
+                print("2. Login")
+                print("3. Exit")
+                choice = input("Enter choice: ")
+
+                if choice == "1":
+                    create_account()
+                elif choice == "2":
+                    customer_id = login(session_id)
+                    if customer_id:
+                        while True:
+                            print("1. Place an Order")
+                            print("2. Logout")
+                            choice = input("Enter choice: ")
+
+                            if choice == "1":
+                                select_product(session_id)
+                                enter_quantity(session_id)
+                                confirm_order(session_id, customer_id)
+                            elif choice == "2":
+                                print("Logged out.")
+                                break
+                            else:
+                                print("Invalid choice. Please try again.")
+                elif choice == "3":
+                    print("Thank you for using our service")
+                    break
+                else:
+                    print("Invalid choice. Please try again.")
             else:
-                print("Invalid choice. Please try again.")
+                print("Session expired or invalid. Please log in again.")
+
     else:
         print("Invalid USSD code.")
 
