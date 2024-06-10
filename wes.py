@@ -267,7 +267,7 @@ def main():
                 print("Session expired or invalid. Please log in again.")
 
     else:
-        print("Invalid USSD code.")
+        print("Invalid USSD code Try Again.")
 
 if __name__ == "__main__":
     main()
